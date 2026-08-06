@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * run-tests.mjs — end-to-end tests for every hook.
  *
@@ -17,6 +17,16 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const HOOKS = path.join(ROOT, 'hooks');
+
+// Read the installer's own identity and wiring rather than hardcoding them, so
+// this suite is correct for both the full kit and the reduced lite build.
+const INSTALLER = fs.readFileSync(path.join(ROOT, 'install.mjs'), 'utf8');
+const MARKER = INSTALLER.match(/const MARKER = '([^']+)'/)?.[1];
+const EXPECTED_HOOKS = (INSTALLER.match(/^\s*\{ event: /gm) || []).length;
+if (!MARKER || !EXPECTED_HOOKS) {
+  process.stdout.write('✗ Could not read MARKER/WIRING out of install.mjs — the suite cannot verify anything.\n');
+  process.exit(1);
+}
 
 let passed = 0;
 let failed = 0;
@@ -238,6 +248,174 @@ for (const [payload, label] of [
   });
 }
 
+group('installer');
+
+await test('--dry-run produces valid settings without writing', async () => {
+  const result = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(ROOT, 'install.mjs'), '--dry-run'], {
+      cwd: tmp,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+
+  assert(result.code === 0, `installer exited ${result.code}: ${result.stderr}`);
+  const json = JSON.parse(result.stdout.slice(result.stdout.indexOf('{')));
+  assert(json.hooks, 'settings should contain a hooks block');
+
+  const commands = Object.values(json.hooks)
+    .flat()
+    .flatMap((g) => g.hooks || [])
+    .map((h) => h.command);
+  assert(commands.length === EXPECTED_HOOKS, `expected ${EXPECTED_HOOKS} hooks wired, got ${commands.length}`);
+  assert(
+    commands.every((c) => c.includes(MARKER)),
+    'every command should be tagged so uninstall can find it',
+  );
+  assert(!fs.existsSync(path.join(tmp, '.claude', 'settings.json')), '--dry-run must not write');
+});
+
+await test('reinstall is idempotent and preserves foreign hooks', async () => {
+  const settingsFile = path.join(tmp, '.claude', 'settings.json');
+  fs.writeFileSync(
+    settingsFile,
+    JSON.stringify({
+      model: 'opus',
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo "my own hook"' }] }] },
+    }),
+  );
+
+  const install = () =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, [path.join(ROOT, 'install.mjs')], {
+        cwd: tmp,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      child.on('close', resolve);
+    });
+
+  await install();
+  await install();
+
+  const after = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+  const all = Object.values(after.hooks).flat().flatMap((g) => g.hooks || []);
+  const ours = all.filter((h) => h.command.includes(MARKER));
+  const theirs = all.filter((h) => h.command === 'echo "my own hook"');
+
+  assert(after.model === 'opus', 'unrelated settings must be preserved');
+  assert(ours.length === EXPECTED_HOOKS, `two installs should still leave ${EXPECTED_HOOKS} hooks, got ${ours.length}`);
+  assert(theirs.length === 1, 'the user\'s own hook must survive untouched');
+});
+
+await test('relocates out of an ephemeral npx cache before wiring hooks', async () => {
+  // Simulate `npx github:user/repo`: npm unpacks into a cache path it will
+  // later prune. Hooks wired there would break silently, so the installer must
+  // copy itself somewhere stable first.
+  const cache = path.join(tmp, '_npx', 'a1b2c3', 'node_modules', MARKER);
+  fs.mkdirSync(cache, { recursive: true });
+  for (const entry of ['lib', 'hooks', 'install.mjs', 'package.json', 'guardrails.config.json']) {
+    fs.cpSync(path.join(ROOT, entry), path.join(cache, entry), { recursive: true });
+  }
+
+  // Redirect HOME so the test cannot touch the real ~/.claude.
+  const fakeHome = path.join(tmp, 'home');
+  fs.mkdirSync(fakeHome, { recursive: true });
+  const project = path.join(tmp, 'relocate-project');
+  fs.mkdirSync(project, { recursive: true });
+
+  const result = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(cache, 'install.mjs')], {
+      cwd: project,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+
+  assert(result.code === 0, `installer failed: ${result.stderr}`);
+
+  const home = path.join(fakeHome, '.claude', MARKER);
+  assert(fs.existsSync(path.join(home, 'hooks', 'guard-bash.mjs')), 'the kit should be copied to ~/.claude');
+
+  const settings = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.json'), 'utf8'));
+  const commands = Object.values(settings.hooks)
+    .flat()
+    .flatMap((g) => g.hooks || [])
+    .map((h) => h.command);
+
+  assert(commands.length === EXPECTED_HOOKS, `expected ${EXPECTED_HOOKS} hooks, got ${commands.length}`);
+  assert(
+    commands.every((c) => !c.includes('_npx')),
+    'no hook may point into the npx cache — that is the whole point',
+  );
+  assert(
+    commands.every((c) => c.includes(`.claude/${MARKER}`)),
+    'every hook should point at the relocated copy',
+  );
+
+  // The relocated copy must actually run, not just exist.
+  const smoke = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(home, 'hooks', 'guard-bash.mjs')], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.on('close', () => resolve(stdout));
+    child.stdin.write(JSON.stringify(bash('git reset --hard HEAD~1')));
+    child.stdin.end();
+  });
+  assert(JSON.parse(smoke).hookSpecificOutput.permissionDecision === 'deny', 'the relocated hook must still block');
+});
+
+await test('--here opts out of relocation', async () => {
+  const cache = path.join(tmp, '_npx', 'd4e5f6', MARKER);
+  fs.mkdirSync(cache, { recursive: true });
+  for (const entry of ['lib', 'hooks', 'install.mjs', 'package.json', 'guardrails.config.json']) {
+    fs.cpSync(path.join(ROOT, entry), path.join(cache, entry), { recursive: true });
+  }
+  const project = path.join(tmp, 'here-project');
+  fs.mkdirSync(project, { recursive: true });
+
+  await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(cache, 'install.mjs'), '--here'], {
+      cwd: project,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    child.on('close', resolve);
+  });
+
+  const settings = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.json'), 'utf8'));
+  const commands = Object.values(settings.hooks).flat().flatMap((g) => g.hooks || []).map((h) => h.command);
+  assert(
+    commands.every((c) => c.includes('_npx')),
+    '--here should wire hooks to the current folder even when it looks ephemeral',
+  );
+});
+
+await test('--uninstall removes only our hooks', async () => {
+  await new Promise((resolve) => {
+    const child = spawn(process.execPath, [path.join(ROOT, 'install.mjs'), '--uninstall'], {
+      cwd: tmp,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    child.on('close', resolve);
+  });
+
+  const after = JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'));
+  const all = Object.values(after.hooks || {}).flat().flatMap((g) => g.hooks || []);
+  assert(!all.some((h) => h.command.includes(MARKER)), 'no guardrails hooks should remain');
+  assert(all.some((h) => h.command === 'echo "my own hook"'), 'the user\'s own hook must survive uninstall');
+  assert(after.model === 'opus', 'unrelated settings must survive uninstall');
+});
+
 // ---------------------------------------------------------------------------
 
 fs.rmSync(tmp, { recursive: true, force: true });
@@ -257,3 +435,4 @@ function hash(str) {
   for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
   return h;
 }
+

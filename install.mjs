@@ -6,6 +6,7 @@
  *   node install.mjs --global         install for every project on this machine
  *   node install.mjs --uninstall      remove guardrails entries, leave the rest
  *   node install.mjs --dry-run        print the resulting settings without writing
+ *   node install.mjs --here           don't relocate; wire hooks to this folder
  *
  * settings.json is the user's file and may contain hooks that have nothing to
  * do with this kit. Every write is preceded by a timestamped backup, and
@@ -19,13 +20,50 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HOOKS = path.join(HERE, 'hooks');
 const MARKER = 'claude-guardrails-lite';
 
 const argv = new Set(process.argv.slice(2));
 const isGlobal = argv.has('--global') || argv.has('-g');
 const isUninstall = argv.has('--uninstall');
 const isDryRun = argv.has('--dry-run');
+const stayHere = argv.has('--here');
+
+/** Where a relocated copy lives. Stable across npx cache eviction. */
+const INSTALL_HOME = path.join(os.homedir(), '.claude', MARKER);
+
+/**
+ * Is this copy running from somewhere that will be deleted?
+ *
+ * `npx github:user/repo` unpacks into a cache directory that npm prunes on its
+ * own schedule. Wiring hooks to that path produces an install that works today
+ * and silently breaks in a week, which is worse than refusing to install.
+ */
+function isEphemeral(dir) {
+  const p = dir.replace(/\\/g, '/').toLowerCase();
+  return (
+    /\/_npx\//.test(p) ||
+    /\/npm-cache\//.test(p) ||
+    /\/\.npm\/_cacache\//.test(p) ||
+    p.startsWith(os.tmpdir().replace(/\\/g, '/').toLowerCase())
+  );
+}
+
+/** Copy the runtime files to INSTALL_HOME so the hook paths stay valid. */
+function relocate() {
+  const payload = ['lib', 'hooks', 'install.mjs', 'package.json', 'guardrails.config.json', 'README.md', 'LICENSE.md', 'QUICKSTART.md'];
+  fs.mkdirSync(INSTALL_HOME, { recursive: true });
+  for (const entry of payload) {
+    const from = path.join(HERE, entry);
+    if (!fs.existsSync(from)) continue; // the lite build ships fewer files
+    fs.cpSync(from, path.join(INSTALL_HOME, entry), { recursive: true, force: true });
+  }
+  return INSTALL_HOME;
+}
+
+// Resolve the home before anything reads HOOKS, since relocation changes it.
+const ROOT_DIR = !isUninstall && !isDryRun && !stayHere && isEphemeral(HERE) ? relocate() : HERE;
+const HOOKS = path.join(ROOT_DIR, 'hooks');
+const RELOCATED = ROOT_DIR !== HERE;
 
 /** Absolute, forward-slashed, quoted — survives PowerShell, cmd, and bash alike. */
 function hookCommand(file) {
@@ -111,10 +149,10 @@ function main() {
     console.error(`✗ hooks/ not found next to install.mjs (looked in ${HOOKS})`);
     process.exit(1);
   }
-  if (!HERE.includes(MARKER)) {
+  if (!ROOT_DIR.includes(MARKER)) {
     console.error(
       `✗ This kit must stay in a directory named "${MARKER}" so uninstall can identify its hooks.\n` +
-        `  Current location: ${HERE}`,
+        `  Current location: ${ROOT_DIR}`,
     );
     process.exit(1);
   }
@@ -141,13 +179,17 @@ function main() {
   // Seed a config file so the user has something to edit rather than a blank page.
   const configFile = path.join(claudeDir, 'guardrails.config.json');
   if (!isUninstall && !fs.existsSync(configFile)) {
-    fs.copyFileSync(path.join(HERE, 'guardrails.config.json'), configFile);
+    fs.copyFileSync(path.join(ROOT_DIR, 'guardrails.config.json'), configFile);
   }
 
   console.log(isUninstall ? '✓ Guardrails removed.' : '✓ Guardrails installed.');
   console.log(`  Settings: ${settingsFile}`);
   if (saved) console.log(`  Backup:   ${saved}`);
   if (!isUninstall) {
+    if (RELOCATED) {
+      console.log(`  Installed to: ${ROOT_DIR}`);
+      console.log('                (copied out of the npx cache so the hooks keep working)');
+    }
     console.log(`  Config:   ${configFile}`);
     console.log(`  Scope:    ${isGlobal ? 'all projects on this machine' : process.cwd()}`);
     console.log('\nRestart Claude Code (or run /hooks) to load them.');

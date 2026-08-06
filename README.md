@@ -1,6 +1,6 @@
 # Claude Guardrails (lite)
 
-[![tests](https://img.shields.io/badge/tests-45%20passing-brightgreen.svg)](test/run-tests.mjs)
+[![tests](https://img.shields.io/badge/tests-50%20passing-brightgreen.svg)](test/run-tests.mjs)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)](package.json)
 
@@ -33,15 +33,38 @@ every single time. A hook is deterministic.
 ## Install
 
 ```bash
-git clone https://github.com/Miguel249/claude-guardrails-lite
-cd claude-guardrails-lite
-node install.mjs --global     # or omit --global for one project
+npx github:Miguel249/claude-guardrails-lite --global
 ```
 
 Restart Claude Code. Verify with `/hooks`.
 
-The installer backs up `settings.json` and only ever removes entries it
-installed, so your own hooks survive install, reinstall, and `--uninstall`.
+Requires Node 18+, which you already have — Claude Code ships on npm.
+
+Drop `--global` to protect only the current project. To remove:
+
+```bash
+npx github:Miguel249/claude-guardrails-lite --uninstall
+```
+
+<details>
+<summary>Or clone it, if you'd rather read the code first (recommended)</summary>
+
+```bash
+git clone https://github.com/Miguel249/claude-guardrails-lite
+cd claude-guardrails-lite
+npm test              # 50 tests, nothing to npm install
+node install.mjs --global
+```
+</details>
+
+Two things the installer does that you should be able to verify yourself:
+
+- **It backs up `settings.json` before every write**, and only ever removes
+  entries it installed — so your own hooks survive install, reinstall, and
+  uninstall. There is a test for exactly that.
+- **Run via `npx`, it copies itself to `~/.claude/claude-guardrails-lite`**
+  first. npm prunes its cache on its own schedule, and hooks wired into a cache
+  path would work today and break silently next week.
 
 ## What it blocks
 

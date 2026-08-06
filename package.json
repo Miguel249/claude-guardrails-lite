@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Free safety hooks for Claude Code: block destructive shell commands, inject repo context. Zero dependencies, cross-platform.",
   "type": "module",
+  "bin": {
+    "claude-guardrails-lite": "./install.mjs"
+  },
   "scripts": {
     "test": "node test/run-tests.mjs",
     "install-hooks": "node install.mjs"
