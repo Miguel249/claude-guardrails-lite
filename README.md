@@ -1,5 +1,9 @@
 # Claude Guardrails (lite)
 
+[![tests](https://github.com/Miguel249/claude-guardrails-lite/actions/workflows/test.yml/badge.svg)](https://github.com/Miguel249/claude-guardrails-lite/actions/workflows/test.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)](package.json)
+
 Two hooks that stop Claude Code from running destructive shell commands, and
 give it the repository context it would otherwise waste three tool calls
 discovering.
@@ -115,7 +119,7 @@ This is two of seven hooks. The complete kit adds:
   retry cap so it cannot trap you
 - **audit-log** — one JSONL line per tool call, per project, across sessions
 
-79 tests. [Get it here](GUMROAD_LINK_HERE).
+79 tests. Releasing shortly — watch this repo and it will be linked here.
 
 ## Contributing
 
