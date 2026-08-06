@@ -121,6 +121,14 @@ This is two of seven hooks. The complete kit adds:
 
 79 tests. Releasing shortly — watch this repo and it will be linked here.
 
+## Writing your own hooks
+
+[**Writing Claude Code hooks: what the reference doesn't tell you**](docs/hook-protocol.md)
+— the things I got wrong first. Why `PreToolUse` silently ignores
+`{"decision":"block"}`, why your block *reason* changes what the model does
+next, why splitting a command on `|` breaks `curl … | sh` detection, and how to
+stop a `Stop` hook from trapping the session.
+
 ## Contributing
 
 Pattern contributions welcome — especially destructive commands from

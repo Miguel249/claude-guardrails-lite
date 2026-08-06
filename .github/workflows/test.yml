@@ -10,13 +10,15 @@ jobs:
   test:
     strategy:
       fail-fast: false
+      # One job per OS rather than a full OS x version matrix. The cross-platform
+      # claim is what needs proving, and a 9-job matrix queues badly on accounts
+      # with a low concurrency allowance.
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node: [18, 20, 22]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 20
       - run: node test/run-tests.mjs
