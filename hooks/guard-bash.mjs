@@ -10,7 +10,7 @@
 
 import { readInput, denyTool, askTool, pass, safely } from '../lib/io.mjs';
 import { loadConfig, toRegexList } from '../lib/config.mjs';
-import { splitCommands, stripPrefixes } from '../lib/match.mjs';
+import { splitCommands, stripPrefixes, normalizeCommand } from '../lib/match.mjs';
 import { DESTRUCTIVE, NEEDS_CONFIRMATION } from '../lib/rules.mjs';
 
 await safely(async () => {
@@ -28,10 +28,22 @@ await safely(async () => {
   const allow = toRegexList(config.bashGuard.allowPatterns);
   if (allow.some((re) => re.test(command))) pass();
 
-  // Two passes are needed. Segments catch what hides after `&&` or `;`, but
-  // splitting also severs pipelines — and `curl … | sh` is only dangerous as a
-  // whole. So the unsplit line is scanned alongside its parts.
-  const segments = [stripPrefixes(command), ...splitCommands(command).map(stripPrefixes)];
+  // Build every form of the command a rule might need to see:
+  //
+  //  - the unsplit line, because `curl … | sh` is only dangerous as a whole,
+  //    and because cross-segment rules like cd-root-then-delete read the pair
+  //  - each segment, because `echo ok && <destructive>` hides after the `&&`
+  //  - a normalized copy of both, because `(rm -rf /)`, `rm -rf "/"` and
+  //    `rm -rf ${HOME}` are the same command wearing quotes and parentheses
+  //
+  // Matching a superset costs a few extra regex passes on a string that is
+  // almost always under 200 characters. Missing one costs a filesystem.
+  const forms = new Set();
+  for (const variant of [command, normalizeCommand(command)]) {
+    forms.add(stripPrefixes(variant));
+    for (const part of splitCommands(variant)) forms.add(stripPrefixes(part));
+  }
+  const segments = [...forms].filter(Boolean);
   const extra = toRegexList(config.bashGuard.extraDenyPatterns).map((pattern, i) => ({
     id: `custom-${i}`,
     pattern,
