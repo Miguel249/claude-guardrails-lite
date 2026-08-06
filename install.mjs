@@ -61,9 +61,14 @@ function relocate() {
 }
 
 // Resolve the home before anything reads HOOKS, since relocation changes it.
-const ROOT_DIR = !isUninstall && !isDryRun && !stayHere && isEphemeral(HERE) ? relocate() : HERE;
+// A dry run resolves to the same destination but does not copy — otherwise it
+// would print npx cache paths that are not what a real install produces, which
+// is the one thing a dry run exists to show you.
+const RELOCATED = !isUninstall && !stayHere && isEphemeral(HERE);
+const ROOT_DIR = RELOCATED ? (isDryRun ? INSTALL_HOME : relocate()) : HERE;
 const HOOKS = path.join(ROOT_DIR, 'hooks');
-const RELOCATED = ROOT_DIR !== HERE;
+/** Always the copy we are running from — the one guaranteed to exist. */
+const SOURCE_DIR = HERE;
 
 /** Absolute, forward-slashed, quoted — survives PowerShell, cmd, and bash alike. */
 function hookCommand(file) {
@@ -145,8 +150,10 @@ function main() {
 
   // The kit must live where the hook commands point. Refuse rather than write
   // paths that will 404 on the first tool call.
-  if (!fs.existsSync(HOOKS)) {
-    console.error(`✗ hooks/ not found next to install.mjs (looked in ${HOOKS})`);
+  // Validate against the copy we are running from: on a dry run the
+  // destination has deliberately not been created yet.
+  if (!fs.existsSync(path.join(SOURCE_DIR, 'hooks'))) {
+    console.error(`✗ hooks/ not found next to install.mjs (looked in ${path.join(SOURCE_DIR, 'hooks')})`);
     process.exit(1);
   }
   if (!ROOT_DIR.includes(MARKER)) {
@@ -168,6 +175,7 @@ function main() {
   const serialized = JSON.stringify(settings, null, 2) + '\n';
 
   if (isDryRun) {
+    if (RELOCATED) console.log(`--- would install to ${ROOT_DIR} (out of the npx cache) ---`);
     console.log(`--- ${settingsFile} (dry run) ---`);
     console.log(serialized);
     return;
@@ -179,7 +187,7 @@ function main() {
   // Seed a config file so the user has something to edit rather than a blank page.
   const configFile = path.join(claudeDir, 'guardrails.config.json');
   if (!isUninstall && !fs.existsSync(configFile)) {
-    fs.copyFileSync(path.join(ROOT_DIR, 'guardrails.config.json'), configFile);
+    fs.copyFileSync(path.join(SOURCE_DIR, 'guardrails.config.json'), configFile);
   }
 
   console.log(isUninstall ? '✓ Guardrails removed.' : '✓ Guardrails installed.');
