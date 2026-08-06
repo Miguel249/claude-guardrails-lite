@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "bashGuard": {
+    "enabled": true,
+    "protectedBranches": [
+      "main",
+      "master",
+      "production",
+      "release"
+    ],
+    "extraDenyPatterns": [],
+    "allowPatterns": []
+  },
+  "sessionContext": {
+    "enabled": true,
+    "includeGitStatus": true,
+    "includeRecentCommits": 5
+  }
+}
