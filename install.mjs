@@ -64,7 +64,12 @@ function relocate() {
 // A dry run resolves to the same destination but does not copy — otherwise it
 // would print npx cache paths that are not what a real install produces, which
 // is the one thing a dry run exists to show you.
-const RELOCATED = !isUninstall && !stayHere && isEphemeral(HERE);
+// Relocate when the current location is ephemeral, and also when it simply
+// isn't identifiable — uninstall finds its own hooks by matching the marker in
+// their command paths, so an install wired from `~/code/my-fork` could never be
+// removed. Cloning into a differently-named directory is normal; failing on it
+// is not acceptable, so we move rather than refuse.
+const RELOCATED = !isUninstall && !stayHere && (isEphemeral(HERE) || !HERE.includes(MARKER));
 const ROOT_DIR = RELOCATED ? (isDryRun ? INSTALL_HOME : relocate()) : HERE;
 const HOOKS = path.join(ROOT_DIR, 'hooks');
 /** Always the copy we are running from — the one guaranteed to exist. */
@@ -156,9 +161,14 @@ function main() {
     console.error(`✗ hooks/ not found next to install.mjs (looked in ${path.join(SOURCE_DIR, 'hooks')})`);
     process.exit(1);
   }
-  if (!ROOT_DIR.includes(MARKER)) {
+  // Uninstall matches on the command strings already in settings.json, so it
+  // does not care where it is run from. Only an install needs an identifiable
+  // path, and by this point relocation has guaranteed one unless --here
+  // overrode it.
+  if (!isUninstall && !ROOT_DIR.includes(MARKER)) {
     console.error(
-      `✗ This kit must stay in a directory named "${MARKER}" so uninstall can identify its hooks.\n` +
+      `✗ --here was used from a directory not named "${MARKER}", so uninstall\n` +
+        `  would not be able to find these hooks again. Rename the folder, or drop --here.\n` +
         `  Current location: ${ROOT_DIR}`,
     );
     process.exit(1);

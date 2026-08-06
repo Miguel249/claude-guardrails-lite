@@ -482,6 +482,52 @@ await test('--here opts out of relocation', async () => {
   );
 });
 
+await test('installs and uninstalls from a directory with an unrelated name', async () => {
+  // This is what `git clone <repo> my-fork` produces, and it is the case that
+  // only fails outside the author's own checkout — where the folder happens to
+  // already be named after the kit.
+  const odd = path.join(tmp, 'some-random-folder-name');
+  fs.mkdirSync(odd, { recursive: true });
+  for (const entry of ['lib', 'hooks', 'install.mjs', 'package.json', 'guardrails.config.json']) {
+    fs.cpSync(path.join(ROOT, entry), path.join(odd, entry), { recursive: true });
+  }
+
+  const fakeHome = path.join(tmp, 'home-odd');
+  fs.mkdirSync(fakeHome, { recursive: true });
+  const project = path.join(tmp, 'odd-project');
+  fs.mkdirSync(project, { recursive: true });
+
+  const invoke = (args) =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, [path.join(odd, 'install.mjs'), ...args], {
+        cwd: project,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome },
+      });
+      let stderr = '';
+      child.stderr.on('data', (d) => (stderr += d));
+      child.on('close', (code) => resolve({ code, stderr }));
+    });
+
+  const installed = await invoke([]);
+  assert(installed.code === 0, `install failed from an oddly-named folder: ${installed.stderr}`);
+
+  const settings = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.json'), 'utf8'));
+  const commands = Object.values(settings.hooks).flat().flatMap((g) => g.hooks || []).map((h) => h.command);
+  assert(commands.length === EXPECTED_HOOKS, `expected ${EXPECTED_HOOKS} hooks, got ${commands.length}`);
+  assert(
+    commands.every((c) => c.includes(MARKER)),
+    'hooks must be wired to an identifiable path, or uninstall can never find them',
+  );
+
+  const removed = await invoke(['--uninstall']);
+  assert(removed.code === 0, `uninstall failed from an oddly-named folder: ${removed.stderr}`);
+
+  const after = JSON.parse(fs.readFileSync(path.join(project, '.claude', 'settings.json'), 'utf8'));
+  const left = Object.values(after.hooks || {}).flat().flatMap((g) => g.hooks || []);
+  assert(left.length === 0, `uninstall left ${left.length} hook(s) behind`);
+});
+
 await test('--uninstall removes only our hooks', async () => {
   await new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(ROOT, 'install.mjs'), '--uninstall'], {

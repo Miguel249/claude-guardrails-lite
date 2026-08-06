@@ -1,6 +1,6 @@
 # Claude Guardrails (lite)
 
-[![tests](https://img.shields.io/badge/tests-94%20passing-brightgreen.svg)](test/run-tests.mjs)
+[![tests](https://img.shields.io/badge/tests-95%20passing-brightgreen.svg)](test/run-tests.mjs)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![node](https://img.shields.io/badge/node-%E2%89%A518-brightgreen.svg)](package.json)
 
@@ -52,7 +52,7 @@ npx github:Miguel249/claude-guardrails-lite --uninstall
 ```bash
 git clone https://github.com/Miguel249/claude-guardrails-lite
 cd claude-guardrails-lite
-npm test              # 94 tests, nothing to npm install
+npm test              # 95 tests, nothing to npm install
 node install.mjs --global
 ```
 </details>
